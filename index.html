@@ -510,6 +510,8 @@
         let selectedDrop = null;     // { index } 手駒選択中 or null
         let movableSquares = [];     // [[row,col], ...]
         let gameOver = false;
+        let move1Check = false;      // 1手目で相手玉に王手したか（2手目で受ける義務の判定用）
+        let aiSearching = false;     // AI探索中は重い existsLegalMove2 を省略
 
         // --- コンピュータ対戦 ---
         let vsComputer = true;
@@ -803,11 +805,14 @@
             if (subMove === 1) {
                 // 1手目：自玉を相手の利きにさらす手は禁止。相手玉への王手はOK。
                 if (inCheck(owner)) return 'illegal';
+                // ただし1手目で王手したなら、続く2手目で受けられること（1手目で詰ます手は不可）。
+                if (!aiSearching && !existsLegalMove2()) return 'illegal';
                 return 'advance';
             }
             if (subMove === 2) {
-                // 2手目（相手の駒を動かす手）は王手の制約なし。
-                // 自玉が王手になる手も指せる（その王手は3手目で受ける）。
+                // 2手目（相手の駒を動かす手）：1手目でかけた王手は必ず受ける（王手放置禁止）。
+                if (move1Check && inCheck(enemy)) return 'illegal';
+                // それ以外は制約なし。新たな開き王手も、自玉が王手になる手も指せる（3手目で受ける）。
                 return 'advance';
             }
             // 3手目（手番側＝owner の駒を動かす）
@@ -815,6 +820,14 @@
             // 相手玉が詰んでいれば勝ち。詰まない王手だけで終えてもよい（相手が次手番で受ける）。
             if (inCheck(enemy) && !hasAnyLegalMove(enemy)) return 'win';
             return 'pass';
+        }
+
+        // 1手目の後、続く2手目（相手の駒を動かす手）に合法手が存在するか
+        // （1手目で王手したなら、相手がその王手を受けられること＝詰みでないこと）。
+        function existsLegalMove2() {
+            const side = opp(turnOwner);      // 2手目に動かす側＝相手
+            if (!inCheck(side)) return true;  // 1手目で王手していない → 2手目は自由
+            return hasAnyLegalMove(side);     // 王手しているなら相手が受けられること
         }
 
         // --- 成りの土台 ---
@@ -912,6 +925,8 @@
                 return;
             }
             if (verdict === 'advance') {
+                // 1手目→2手目へ進む時、相手玉に王手したかを記録（2手目で受ける義務の判定用）
+                if (subMove === 1) move1Check = inCheck(opp(turnOwner));
                 subMove += 1;
                 render();
                 return;
@@ -919,6 +934,7 @@
             // 'pass' : 手番交代
             turnOwner = opp(turnOwner);
             subMove = 1;
+            move1Check = false;
             render();
 
             // 新しい手番側がまったく動けない（手詰まり）→ その人の負け
@@ -1125,9 +1141,12 @@
                         pushTop(top, seq, sc);
                     }
                 } else {
+                    const savedM1 = move1Check;
+                    if (subMove === 1) move1Check = inCheck(opp(turnOwner));
                     subMove += 1;
                     exploreTurn(seq, mateOut, top, evalSide);
                     subMove -= 1;
+                    move1Check = savedM1;
                 }
                 seq.pop();
                 undoAIMove(u);
@@ -1182,6 +1201,7 @@
 
         // コンピュータの3手を立案（難易度別）
         function planComputerTurn() {
+            aiSearching = true;
             try {
                 subMove = 1; aiNodes = 0;
                 const mateOut = { seq: null };
@@ -1220,6 +1240,7 @@
                 }
                 return bestCand;
             } finally {
+                aiSearching = false;
                 subMove = 1;
             }
         }
@@ -1279,6 +1300,7 @@
             clearSelection();
             turnOwner = 'b';
             subMove = 1;
+            move1Check = false;
             gameOver = false;
             thinking = false;
             lastMoveSquare = null;
@@ -1450,6 +1472,7 @@
             clearSelection();
             turnOwner = 'b';
             subMove = 1;
+            move1Check = false;
             gameOver = false;
             thinking = false;
             lastMoveSquare = null;
