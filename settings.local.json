@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sed '1d;$d')",
+      "Bash(node --check /tmp/sgi.js)",
+      "Bash(cd /tmp)",
+      "Bash(sed -i \"s/global.document = { getElementById:\\(id\\)=> els\\\\[id\\\\] || \\(els\\\\[id\\\\]=fakeEl\\(id\\)\\) };/global.document = { getElementById:\\(id\\)=> els[id] || \\(els[id]=fakeEl\\(id\\)\\), createElement:\\(\\)=>fakeEl\\('x'\\) };/\" harness.js)",
+      "Bash(node harness.js)",
+      "Bash(sed -i \"s#readFileSync\\('shogi.html'#readFileSync\\('C:/Users/pseud/OneDrive/ClaudeFile/shogi.html'#\" /tmp/harness.js)",
+      "Bash(node /tmp/harness.js)",
+      "Bash(node /tmp/chk.js)",
+      "Bash(node /tmp/rule.js)",
+      "Bash(node /tmp/all.js)",
+      "Bash(node /tmp/intg.js)",
+      "Bash(curl -sL --max-time 20 https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js -o peerjs.min.js)",
+      "Bash(openssl dgst *)",
+      "Bash(sed '/<script src=/d')",
+      "Bash(node /tmp/sync.js)",
+      "Bash(node /tmp/fuzz.js)"
+    ]
+  }
+}
