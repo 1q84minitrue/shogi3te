@@ -398,8 +398,8 @@
 
         #online-status { color: #FFD9B3; min-height: 18px; }
     </style>
-    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"
-            integrity="sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR"
+    <script src="https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js"
+            integrity="sha384-u4uqeACkFcoKl57rBQJHVGDd1pqhW4w8X3WjTu1ZksPdxoLqdt34jpoNkJisE25W"
             crossorigin="anonymous"></script>
 </head>
 <body>
@@ -515,12 +515,14 @@
         let aiLevel = 'medium';       // 難易度: 'easy' | 'medium' | 'hard'
         let aiSearching = false;      // AI探索中は重い existsLegalMove2 を省略
 
-        // --- オンライン対戦（PeerJS / WebRTC） ---
+        // --- オンライン対戦（MQTT over WebSocket リレー） ---
         let online = false;           // オンライン対戦中か
         let connected = false;        // 友人と接続済みか
-        let myColor = 'b';            // 自分の担当（ホスト=先手b / ゲスト=後手w）
-        let peer = null;              // PeerJS の Peer
-        let conn = null;              // データ接続
+        let myColor = 'b';            // 自分の担当（部屋作成=先手b / 参加=後手w）
+        let client = null;            // MQTTクライアント
+        let myId = '';                // 自分の識別子（自分の送信を無視するため）
+        let topic = '';               // 合言葉に対応するトピック
+        let peerPresent = false;      // 相手が現れたか
 
         // --- 3手将棋の手番管理 ---
         let turnOwner = 'b';   // この手番を行うプレイヤー（'b' or 'w'）
@@ -1321,23 +1323,10 @@
         }
 
         // ===================== オンライン対戦 =====================
-        const ID_PREFIX = 'teshogi3-';
         const ID_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+        const TOPIC_PREFIX = 'teshogi3/';
+        const MQTT_BROKER = 'wss://broker.emqx.io:8084/mqtt';   // 公開ブローカー（中継サーバー）
 
-        // NAT越え用の ICE サーバー（STUN + 無料TURN中継）。
-        // モバイル回線など直接P2Pできない環境ではTURN経由で接続する。
-        const PEER_OPTS = {
-            config: {
-                iceServers: [
-                    { urls: 'stun:stun.l.google.com:19302' },
-                    { urls: 'stun:stun1.l.google.com:19302' },
-                    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-                    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-                    { urls: 'turn:openrelay.metered.ca:80?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-                    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
-                ]
-            }
-        };
         function randCode(n) {
             let s = '';
             for (let i = 0; i < n; i++) s += ID_CHARS[Math.floor(Math.random() * ID_CHARS.length)];
@@ -1349,78 +1338,98 @@
         }
 
         function cleanupPeer() {
-            if (conn) { try { conn.close(); } catch (e) {} conn = null; }
-            if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
+            if (client) { try { client.end(true); } catch (e) {} client = null; }
             connected = false;
             online = false;
+            peerPresent = false;
             document.getElementById('online-setup').style.display = '';
             document.getElementById('room-row').style.display = 'none';
         }
 
         function startHost() {
-            if (typeof Peer === 'undefined') { setOnlineStatus('通信ライブラリを読み込めません（要インターネット接続）'); return; }
+            if (typeof mqtt === 'undefined') { setOnlineStatus('通信ライブラリを読み込めません（要インターネット接続）'); return; }
             cleanupPeer();
             online = true;
             myColor = 'b';
-            setOnlineStatus('部屋を作成中…');
-            tryHost();
-        }
-
-        function tryHost() {
             const code = randCode(4);
-            peer = new Peer(ID_PREFIX + code, PEER_OPTS);
-            peer.on('open', () => {
-                document.getElementById('room-code').textContent = code;
-                document.getElementById('room-row').style.display = '';
-                document.getElementById('online-setup').style.display = 'none';
-                setOnlineStatus('友人の参加を待っています…');
-            });
-            peer.on('connection', c => { conn = c; setupConn(); });
-            peer.on('error', e => {
-                if (e.type === 'unavailable-id') { try { peer.destroy(); } catch (x) {} tryHost(); }
-                else setOnlineStatus('エラー: ' + e.type);
-            });
+            document.getElementById('room-code').textContent = code;
+            document.getElementById('room-row').style.display = '';
+            document.getElementById('online-setup').style.display = 'none';
+            setOnlineStatus('サーバーに接続中…');
+            connectRoom(code);
         }
 
         function startJoin() {
-            if (typeof Peer === 'undefined') { setOnlineStatus('通信ライブラリを読み込めません（要インターネット接続）'); return; }
+            if (typeof mqtt === 'undefined') { setOnlineStatus('通信ライブラリを読み込めません（要インターネット接続）'); return; }
             const code = (document.getElementById('join-code').value || '').trim().toUpperCase();
             if (!code) { setOnlineStatus('合言葉を入力してください'); return; }
             cleanupPeer();
             online = true;
             myColor = 'w';
-            setOnlineStatus('接続中…');
-            peer = new Peer(undefined, PEER_OPTS);
-            peer.on('open', () => {
-                conn = peer.connect(ID_PREFIX + code, { reliable: true });
-                setupConn();
-            });
-            peer.on('error', e => {
-                if (e.type === 'peer-unavailable') setOnlineStatus('その合言葉の部屋が見つかりません');
-                else setOnlineStatus('エラー: ' + e.type);
-            });
+            setOnlineStatus('サーバーに接続中…');
+            connectRoom(code);
         }
 
-        function setupConn() {
-            conn.on('open', () => {
-                connected = true;
-                setOnlineStatus(`接続しました！　あなたは${playerName(myColor)}です`);
-                document.getElementById('online-setup').style.display = 'none';
-                startOnlineGame();
+        // 合言葉のトピックでブローカーに接続し、相手と握手する
+        function connectRoom(code) {
+            myId = randCode(10);
+            topic = TOPIC_PREFIX + code;
+            peerPresent = false;
+            try {
+                client = mqtt.connect(MQTT_BROKER, {
+                    clientId: 'teshogi-' + myId,
+                    reconnectPeriod: 3000,
+                    connectTimeout: 15000,
+                    clean: true
+                });
+            } catch (e) {
+                setOnlineStatus('サーバーに接続できませんでした');
+                return;
+            }
+            client.on('connect', () => {
+                client.subscribe(topic, { qos: 1 }, err => {
+                    if (err) { setOnlineStatus('部屋への参加に失敗しました'); return; }
+                    setOnlineStatus(myColor === 'b' ? '友人の参加を待っています…' : '相手を探しています…');
+                    sendRaw({ type: 'hello', color: myColor });
+                });
             });
-            conn.on('data', handleRemote);
-            conn.on('close', () => {
-                connected = false;
-                setOnlineStatus('接続が切れました');
-                render();
+            client.on('message', (t, payload) => {
+                let msg;
+                try { msg = JSON.parse(payload.toString()); } catch (e) { return; }
+                if (!msg || msg.from === myId) return;     // 自分の送信は無視
+                onNetMessage(msg);
             });
-            conn.on('error', () => setOnlineStatus('直接接続に失敗しました。両者ともWi-Fiにする／HTTPSのURLで開くと改善します'));
+            client.on('error', () => setOnlineStatus('サーバー接続でエラーが発生しました'));
+            client.on('reconnect', () => { if (!connected) setOnlineStatus('再接続中…'); });
+            client.on('close', () => { if (online && !connected) setOnlineStatus('サーバーに接続できません（少し待って再試行してください）'); });
+        }
+
+        function sendRaw(msg) {
+            if (client && client.connected) {
+                msg.from = myId;
+                try { client.publish(topic, JSON.stringify(msg), { qos: 1 }); } catch (e) {}
+            }
         }
 
         function sendMsg(msg) {
-            if (online && conn && connected) {
-                try { conn.send(msg); } catch (e) {}
+            if (online) sendRaw(msg);
+        }
+
+        // 受信メッセージの入り口（握手＝helloとゲームメッセージを振り分け）
+        function onNetMessage(msg) {
+            if (msg.type === 'hello') {
+                if (!peerPresent) {
+                    peerPresent = true;
+                    connected = true;
+                    setOnlineStatus(`接続しました！　あなたは${playerName(myColor)}です`);
+                    document.getElementById('online-setup').style.display = 'none';
+                    startOnlineGame();
+                    sendRaw({ type: 'hello', color: myColor });   // 相手にも存在を知らせる
+                }
+                return;
             }
+            if (!connected) return;     // 握手前のゲームメッセージは無視
+            handleRemote(msg);
         }
 
         // 受信した着手が「相手の手番の合法手」かを検証（不正・破損データを弾く）
