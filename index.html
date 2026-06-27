@@ -431,7 +431,6 @@
         </label>
         <label id="level-wrap">強さ：
             <select id="level-select">
-                <option value="easy">弱</option>
                 <option value="medium" selected>中</option>
                 <option value="hard">強</option>
                 <option value="max">最強</option>
@@ -520,7 +519,7 @@
         let humanSide = 'b';
         let thinking = false;         // コンピュータ思考中は入力をロック
         let lastMoveSquare = null;    // コンピュータの直前手をハイライト
-        let aiLevel = 'medium';       // 難易度: 'easy' | 'medium' | 'hard'
+        let aiLevel = 'medium';       // 難易度: 'medium' | 'hard' | 'max'
 
         // --- オンライン対戦（MQTT over WebSocket リレー） ---
         let online = false;           // オンライン対戦中か
@@ -1005,8 +1004,8 @@
             for (const t of captured[side]) score += (PIECE_VAL[t] || 0) * 10 + HAND_FLEX;
             for (const t of captured[enemy]) score -= (PIECE_VAL[t] || 0) * 10 + HAND_FLEX;
             if (inCheck(side)) score -= 60;     // 自玉が王手のまま終わる手は避ける
-            // 玉の安全度はあくまで補助（駒の損得＝1枚で最低10点 を超えない小さな重み）
-            if (kingSafetyEval) score += (kingExposure(enemy) - kingExposure(side)) * 0.4;
+            // 玉の安全度（攻め・受け）。駒の損得（1枚=最低10点）は超えない範囲で攻撃志向を強める。
+            if (kingSafetyEval) score += (kingExposure(enemy) - kingExposure(side)) * 0.7;
             return score + Math.random() * evalNoise; // わずかに散らして同じ手を避ける
         }
 
@@ -1079,10 +1078,9 @@
 
         // 難易度ごとの設定
         const LEVELS = {
-            easy:   { beam1: 6,  beam2: 5,  topK: 4,  mode: 'greedy',     noise: 8,    kingSafety: false, budget: 300000 },
-            medium: { beam1: 14, beam2: 12, topK: 6,  mode: 'safe',       noise: 0.4,  kingSafety: true,  budget: 300000 },
-            hard:   { beam1: 18, beam2: 14, topK: 6,  mode: 'lookahead',  noise: 0.15, kingSafety: true,  budget: 350000 },
-            max:    { beam1: 28, beam2: 20, topK: 10, mode: 'lookahead',  noise: 0.05, kingSafety: true,  budget: 1000000 },
+            medium: { beam1: 14, beam2: 12, topK: 6,  mode: 'safe',      noise: 0.4,  kingSafety: true, budget: 300000 },
+            hard:   { beam1: 20, beam2: 14, topK: 6,  mode: 'lookahead', noise: 0.15, kingSafety: true, budget: 400000 },
+            max:    { beam1: 34, beam2: 22, topK: 8,  mode: 'lookahead', noise: 0.02, kingSafety: true, budget: 1500000 },
         };
         let beam1 = 14, beam2 = 12, topK = 6, evalNoise = 0.4, aiMode = 'safe', kingSafetyEval = true;
 
