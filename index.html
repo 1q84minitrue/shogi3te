@@ -434,6 +434,7 @@
                 <option value="easy">弱</option>
                 <option value="medium" selected>中</option>
                 <option value="hard">強</option>
+                <option value="max">最強</option>
             </select>
         </label>
         <button id="newgame-btn">新規対局</button>
@@ -1074,13 +1075,14 @@
         }
 
         let aiNodes = 0;
-        const AI_BUDGET = 300000;
+        let aiBudget = 300000;
 
         // 難易度ごとの設定
         const LEVELS = {
-            easy:   { beam1: 6,  beam2: 5,  topK: 4, mode: 'greedy',    noise: 8,    kingSafety: false },
-            medium: { beam1: 14, beam2: 12, topK: 6, mode: 'safe',      noise: 0.4,  kingSafety: true  },
-            hard:   { beam1: 18, beam2: 14, topK: 6, mode: 'lookahead', noise: 0.15, kingSafety: true  },
+            easy:   { beam1: 6,  beam2: 5,  topK: 4,  mode: 'greedy',     noise: 8,    kingSafety: false, budget: 300000 },
+            medium: { beam1: 14, beam2: 12, topK: 6,  mode: 'safe',       noise: 0.4,  kingSafety: true,  budget: 300000 },
+            hard:   { beam1: 18, beam2: 14, topK: 6,  mode: 'lookahead',  noise: 0.15, kingSafety: true,  budget: 350000 },
+            max:    { beam1: 28, beam2: 20, topK: 10, mode: 'lookahead',  noise: 0.05, kingSafety: true,  budget: 1000000 },
         };
         let beam1 = 14, beam2 = 12, topK = 6, evalNoise = 0.4, aiMode = 'safe', kingSafetyEval = true;
 
@@ -1088,6 +1090,7 @@
             const L = LEVELS[aiLevel] || LEVELS.medium;
             beam1 = L.beam1; beam2 = L.beam2; topK = L.topK;
             evalNoise = L.noise; aiMode = L.mode; kingSafetyEval = L.kingSafety;
+            aiBudget = L.budget;
         }
 
         // 候補手を簡易評価で並べ、上位だけ返す（王手は最優先で残す）
@@ -1121,7 +1124,7 @@
 
         // 詰みのみ早期検出（top を渡せば最善候補も収集）
         function exploreTurn(seq, mateOut, top, evalSide) {
-            if (aiNodes > AI_BUDGET) return;
+            if (aiNodes > aiBudget) return;
             const moves = (subMove < 3)
                 ? beamCandidates(subMove === 1 ? beam1 : beam2, evalSide)
                 : genCandidateMoves();
@@ -1151,7 +1154,7 @@
                 seq.pop();
                 undoAIMove(u);
                 if (mateOut.seq) return;            // 詰み発見で打ち切り
-                if (aiNodes > AI_BUDGET) return;
+                if (aiNodes > aiBudget) return;
             }
         }
 
@@ -1176,7 +1179,7 @@
             subMove = 1;
         }
 
-        // 自分の手番終了後（相手の手番）、相手の最善応手まで読んだ局面を aiSide 視点で評価
+        // 自分の手番終了後（相手の手番）、相手の最善応手まで読んだ局面を aiSide 視点で評価。
         function opponentReplyValue(aiSide) {
             const oppSide = opp(aiSide);
             const savedOwner = turnOwner, savedSub = subMove;
@@ -1191,7 +1194,7 @@
                 val = 1e7;                  // 相手が指せない（手詰まり）→ こちらの勝ち
             } else {
                 top.sort((a, b) => b.score - a.score);
-                const undos = applySeq(top[0].seq);
+                const undos = applySeq(top[0].seq);     // 相手の最善応手を適用
                 val = evaluateBoard(aiSide);
                 undoSeq(undos);
             }
@@ -1228,7 +1231,8 @@
                     return top[0].seq;
                 }
 
-                // 強：相手の最善応手まで読み、最も良い手順を選ぶ（ミニマックス2手番）
+                // 強／最強：相手の最善応手まで読み、最も良い手順を選ぶ（ミニマックス2手番）。
+                // 最強は幅（ビーム）と候補数を広げてより精密に読む。
                 let bestCand = top[0].seq, bestVal = -Infinity;
                 const limit = Math.min(top.length, topK);
                 for (let i = 0; i < limit; i++) {
